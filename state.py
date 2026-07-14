@@ -22,6 +22,7 @@ class IncidentState(TypedDict):
     similar_incidents: list
     recommended_actions: list
     knowledge_summary: str
+    knowledge_relevance: float
 
     # Report output
     draft_response: str

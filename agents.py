@@ -1,9 +1,10 @@
 from langchain_anthropic import ChatAnthropic
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.prebuilt import create_react_agent
-from tools import triage_alert, search_knowledge_base, generate_incident_report
+from tools import triage_alert, generate_incident_report
 from state import IncidentState
 from dotenv import load_dotenv
+from mcp_client import fetch_runbooks
 
 load_dotenv()
 
@@ -16,15 +17,6 @@ triage_agent = create_react_agent(
     prompt="""You are a triage agent. Your job is to classify incoming system alerts.
 Call the triage_alert tool with the alert message and return the severity, category and confidence score.
 Be concise and always use the tool."""
-)
-
-# --- Knowledge Base Agent ---
-knowledge_agent = create_react_agent(
-    model=llm,
-    tools=[search_knowledge_base],
-    prompt="""You are a knowledge base agent. Given an incident category, search the runbook.
-Call the search_knowledge_base tool with the category and return similar incidents and recommended actions.
-Always use the tool."""
 )
 
 # --- Report Agent ---
@@ -58,21 +50,36 @@ def run_triage(state: IncidentState) -> dict:
     return {"current_stage": "knowledge_search", "messages": result["messages"]}
 
 def run_knowledge_search(state: IncidentState) -> dict:
-    result = knowledge_agent.invoke({
-        "messages": [("user", f"Search runbook for category: {state['category']}")]
-    })
-    tool_messages = [m for m in result["messages"] if hasattr(m, "type") and m.type == "tool"]
-    if tool_messages:
-        import json
-        kb_data = json.loads(tool_messages[-1].content)
+    kb_response = fetch_runbooks(state["category"])
+
+    results = kb_response.get("results", [])
+
+    # Defensive handling for unexpected empty responses
+    if not results:
         return {
-            "similar_incidents": kb_data["similar_incidents"],
-            "recommended_actions": kb_data["recommended_actions"],
-            "knowledge_summary": kb_data["knowledge_summary"],
-            "current_stage": "report_generation",
-            "messages": result["messages"]
+            "similar_incidents": [],
+            "recommended_actions": [],
+            "knowledge_summary": f"No runbook found for category '{state['category']}'.",
+            "knowledge_relevance": 0.0,
+            "current_stage": "report_generation"
         }
-    return {"current_stage": "report_generation", "messages": result["messages"]}
+
+    result = results[0]
+
+    runbook = result["runbook"]
+    relevance = result["relevance_score"]
+
+    return {
+        "similar_incidents": runbook["related_incidents"],
+        "recommended_actions": runbook["remediation_steps"],
+        "knowledge_summary": (
+            f"Found runbook '{runbook['title']}' "
+            f"for category '{runbook['category']}' "
+            f"(relevance: {relevance:.1f})."
+        ),
+        "knowledge_relevance": relevance,
+        "current_stage": "report_generation"
+    }
 
 def run_report_generation(state: IncidentState) -> dict:
     result = report_agent.invoke({
@@ -114,4 +121,31 @@ Respond with APPROVED or NEEDS_REVISION followed by one sentence.
         "final_response": state["draft_response"] if approved else "",
         "current_stage": "completed",
         "messages": [response]
+    }
+
+def run_escalation(state: IncidentState) -> dict:
+    """
+    Escalate incidents when the retrieved knowledge is not
+    sufficiently relevant for autonomous handling.
+    """
+
+    return {
+        "review_status": "escalated",
+        "final_response": f"""
+Incident has been escalated for human review.
+
+Reason:
+Knowledge retrieval confidence was too low
+(Relevance Score: {state.get("knowledge_relevance", 0.0):.1f}).
+
+Alert:
+{state["alert_message"]}
+
+Generated Incident Report:
+{state["draft_response"]}
+
+Recommended Action:
+Please hand off this incident to the on-call engineer for further investigation.
+""".strip(),
+        "current_stage": "completed"
     }

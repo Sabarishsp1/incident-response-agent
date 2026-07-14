@@ -64,7 +64,7 @@ RUNBOOK = {
             "5. Alert if usage exceeds 90% - escalate immediately"
         ]
     },
-    "default": {
+    "unclassified": {
         "similar_incidents": [
             "INC-2024-099: Generic service degradation - resolved by rolling restart",
         ],
@@ -93,7 +93,7 @@ def triage_alert(alert_message: str) -> dict:
     elif any(word in alert_lower for word in ["disk", "storage", "space", "filesystem"]):
         category = "disk"
     else:
-        category = "default"
+        category = "unclassified"
 
     # Severity detection
     if any(word in alert_lower for word in ["critical", "down", "outage", "95%", "98%", "100%", "failed"]):
