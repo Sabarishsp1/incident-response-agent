@@ -1,9 +1,8 @@
 import asyncio
 import json
 
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
-
+from mcp import ClientSession
+from mcp.client.stdio import stdio_client, StdioServerParameters
 
 SERVER_PARAMS = StdioServerParameters(
     command="python",
@@ -11,43 +10,83 @@ SERVER_PARAMS = StdioServerParameters(
 )
 
 
-async def _fetch_runbooks_async(category: str) -> dict:
-    async with stdio_client(SERVER_PARAMS) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
+class MCPTransportError(Exception):
+    """Connection/transport failure — transient, worth retrying."""
 
-            result = await session.call_tool(
-                "search_runbooks",
-                {
-                    "category": category
-                }
-            )
 
-            #
-            # FastMCP tool responses come back as content objects.
-            # For this project the tool returns JSON, so extract the
-            # text payload and deserialize it.
-            #
-            if not result.content:
-                return {"results": []}
+class MCPToolError(Exception):
+    """Tool executed but returned an error — do not retry."""
 
-            return json.loads(result.content[0].text)
+
+async def _fetch_runbooks_once(category: str) -> dict:
+    """
+    Perform a single MCP call.
+
+    Raises:
+        MCPTransportError
+        MCPToolError
+    """
+    try:
+        async with stdio_client(SERVER_PARAMS) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+
+                result = await session.call_tool(
+                    "search_runbooks",
+                    {"category": category},
+                )
+
+    except Exception as e:
+        raise MCPTransportError(
+            f"Failed communicating with MCP server: {e}"
+        ) from e
+
+    #
+    # Transport succeeded.
+    # Tool may still have failed.
+    #
+    if getattr(result, "isError", False):
+        raise MCPToolError(result.content[0].text)
+
+    if not result.content:
+        return {"results": []}
+
+    try:
+        return json.loads(result.content[0].text)
+    except json.JSONDecodeError as e:
+        raise MCPToolError(
+        f"Invalid JSON returned by MCP tool: {e}"
+        ) from e
+
+
+async def _fetch_runbooks_with_retry(category: str) -> dict:
+    """
+    Retry transport failures once after a short delay.
+    Tool errors are never retried.
+    """
+    try:
+        return await _fetch_runbooks_once(category)
+
+    except MCPTransportError:
+        #
+        # Short backoff for transient failures.
+        #
+        await asyncio.sleep(0.5)
+
+        return await _fetch_runbooks_once(category)
 
 
 def fetch_runbooks(category: str) -> dict:
     """
-    Synchronous wrapper around the async MCP client.
+    Sync wrapper for LangGraph.
 
     NOTE:
-    This uses asyncio.run(), which is appropriate for the current
-    synchronous graph.invoke() workflow.
+    Uses asyncio.run(), which is appropriate for the current
+    synchronous graph.invoke() setup.
 
-    If the application is later hosted inside an async framework
-    such as FastAPI, this bridge should be revisited because
-    asyncio.run() cannot be called from an already-running event loop.
+    This should be revisited when moving to an async framework
+    such as FastAPI.
     """
-    return asyncio.run(_fetch_runbooks_async(category))
-
-if __name__ == "__main__":
-    print(fetch_runbooks("database"))
-    print(fetch_runbooks("storage"))
+    return asyncio.run(
+        _fetch_runbooks_with_retry(category)
+    )

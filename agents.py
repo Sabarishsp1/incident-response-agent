@@ -4,7 +4,7 @@ from langgraph.prebuilt import create_react_agent
 from tools import triage_alert, generate_incident_report
 from state import IncidentState
 from dotenv import load_dotenv
-from mcp_client import fetch_runbooks
+from mcp_client import fetch_runbooks, MCPTransportError,MCPToolError
 
 load_dotenv()
 
@@ -50,36 +50,49 @@ def run_triage(state: IncidentState) -> dict:
     return {"current_stage": "knowledge_search", "messages": result["messages"]}
 
 def run_knowledge_search(state: IncidentState) -> dict:
-    kb_response = fetch_runbooks(state["category"])
+    try:
+        kb_response = fetch_runbooks(state["category"])
 
-    results = kb_response.get("results", [])
+        results = kb_response.get("results", [])
 
-    # Defensive handling for unexpected empty responses
-    if not results:
+        if not results:
+            return {
+                "similar_incidents": [],
+                "recommended_actions": [],
+                "knowledge_summary": "No matching runbook found.",
+                "knowledge_relevance": 0.0,
+                "current_stage": "report_generation",
+            }
+
+        result = results[0]
+        runbook = result["runbook"]
+        relevance = result["relevance_score"]
+
+        return {
+            "similar_incidents": runbook["related_incidents"],
+            "recommended_actions": runbook["remediation_steps"],
+            "knowledge_summary": (
+                f"Found runbook '{runbook['title']}' "
+                f"(relevance: {relevance:.1f})"
+            ),
+            "knowledge_relevance": relevance,
+            "current_stage": "report_generation",
+        }
+
+    except (MCPTransportError, MCPToolError) as e:
+        #
+        # Degrade gracefully.
+        # Preserve the incident and let the router escalate.
+        #
         return {
             "similar_incidents": [],
             "recommended_actions": [],
-            "knowledge_summary": f"No runbook found for category '{state['category']}'.",
+            "knowledge_summary": (
+                f"Knowledge lookup failed: {type(e).__name__}"
+            ),
             "knowledge_relevance": 0.0,
-            "current_stage": "report_generation"
+            "current_stage": "report_generation",
         }
-
-    result = results[0]
-
-    runbook = result["runbook"]
-    relevance = result["relevance_score"]
-
-    return {
-        "similar_incidents": runbook["related_incidents"],
-        "recommended_actions": runbook["remediation_steps"],
-        "knowledge_summary": (
-            f"Found runbook '{runbook['title']}' "
-            f"for category '{runbook['category']}' "
-            f"(relevance: {relevance:.1f})."
-        ),
-        "knowledge_relevance": relevance,
-        "current_stage": "report_generation"
-    }
 
 def run_report_generation(state: IncidentState) -> dict:
     result = report_agent.invoke({

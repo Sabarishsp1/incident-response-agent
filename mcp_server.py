@@ -1,4 +1,9 @@
 from mcp.server.fastmcp import FastMCP
+from schemas import (
+    Runbook,
+    SearchResult,
+    SearchRunbooksResponse,
+)
 mcp = FastMCP("incident-knowledge-base")
 
 RUNBOOKS = {
@@ -15,9 +20,21 @@ RUNBOOKS = {
             "Consider read replica failover if primary is unresponsive"
         ],
         "related_incidents": [
-            "INC-2024-089: MySQL CPU spike to 98% - resolved by killing long-running queries",
-            "INC-2024-134: PostgreSQL connection pool exhausted - resolved by restarting pgBouncer",
-            "INC-2024-201: MongoDB memory pressure - resolved by adding index on query field"
+            {
+                "incident_id": "INC-2024-089",
+                "description": "MySQL CPU spike to 98%",
+                "resolution": "Killed long-running queries"
+            },
+            {
+                "incident_id": "INC-2024-134",
+                "description": "PostgreSQL connection pool exhausted",
+                "resolution": "Restarted pgBouncer"
+            },
+            {
+                "incident_id": "INC-2024-201",
+                "description": "MongoDB memory pressure",
+                "resolution": "Added missing index"
+            }
         ]
     },
     "network": {
@@ -32,8 +49,16 @@ RUNBOOKS = {
             "Test connectivity between affected services"
         ],
         "related_incidents": [
-            "INC-2024-045: Network latency spike between services - resolved by restarting load balancer",
-            "INC-2024-112: DNS resolution failures - resolved by flushing DNS cache on affected nodes"
+            {
+                "incident_id": "INC-2024-045",
+                "description": "Network latency spike between services",
+                "resolution": "Restarted load balancer"
+            },
+            {
+                "incident_id": "INC-2024-112",
+                "description": "DNS resolution failures",
+                "resolution": "Flushed DNS cache on affected nodes"
+            }
         ]
     },
     "memory": {
@@ -48,8 +73,16 @@ RUNBOOKS = {
             "Consider rolling restart of affected service"
         ],
         "related_incidents": [
-            "INC-2024-067: JVM heap exhaustion causing OOM kills - resolved by increasing heap size",
-            "INC-2024-156: Memory leak in payment service - resolved by rolling restart"
+            {
+                "incident_id": "INC-2024-067",
+                "description": "JVM heap exhaustion causing OOM kills",
+                "resolution": "Increased heap size"
+            },
+            {
+                "incident_id": "INC-2024-156",
+                "description": "Memory leak in payment service",
+                "resolution": "Rolling restart"
+            }
         ]
     },
     "cpu": {
@@ -64,8 +97,16 @@ RUNBOOKS = {
             "Consider scaling horizontally if load-related"
         ],
         "related_incidents": [
-            "INC-2024-023: CPU spike due to infinite loop in worker - resolved by restarting worker",
-            "INC-2024-178: High CPU from malformed regex in API - resolved by deploying hotfix"
+            {
+                "incident_id": "INC-2024-023",
+                "description": "CPU spike due to infinite loop in worker",
+                "resolution": "Restarted worker"
+            },
+            {
+                "incident_id": "INC-2024-178",
+                "description": "High CPU from malformed regex in API",
+                "resolution": "Deployed hotfix"
+            }
         ]
     },
     "disk": {
@@ -81,8 +122,16 @@ RUNBOOKS = {
             "Alert if usage exceeds 90% - escalate immediately"
         ],
         "related_incidents": [
-            "INC-2024-055: Disk usage hit 95% on app-server - resolved by clearing old logs",
-            "INC-2024-143: Log rotation misconfiguration caused disk fill - resolved by fixing logrotate"
+            {
+                "incident_id": "INC-2024-055",
+                "description": "Disk usage hit 95% on app-server",
+                "resolution": "Cleared old logs"
+            },
+            {
+                "incident_id": "INC-2024-143",
+                "description": "Log rotation misconfiguration caused disk fill",
+                "resolution": "Fixed logrotate configuration"
+            }
         ]
     },
     "default": {
@@ -96,35 +145,41 @@ RUNBOOKS = {
             "Escalate to on-call engineer if unresolved within 15 minutes"
         ],
         "related_incidents": [
-            "INC-2024-099: Generic service degradation - resolved by rolling restart"
+            {
+                "incident_id": "INC-2024-099",
+                "description": "Generic service degradation",
+                "resolution": "Rolling restart"
+            }
         ]
     }
 }
 @mcp.tool()
-def search_runbooks(category: str) -> dict:
+def search_runbooks(category: str) -> SearchRunbooksResponse:
     """Search the knowledge base for runbooks matching an incident category."""
 
     category = category.lower()
 
-    # Exact category match
     if category in RUNBOOKS:
-        return {
-            "results": [
-                {
-                    "runbook": RUNBOOKS[category],
-                    "relevance_score": 1.0
-                }
-            ]
-        }
+        runbook = Runbook(**RUNBOOKS[category])
 
-    # Fallback to generic runbook
-    return {
-        "results": [
-            {
-                "runbook": RUNBOOKS["default"],
-                "relevance_score": 0.3
-            }
+        return SearchRunbooksResponse(
+            results=[
+                SearchResult(
+                    runbook=runbook,
+                    relevance_score=1.0
+                )
+            ]
+        )
+
+    runbook = Runbook(**RUNBOOKS["default"])
+
+    return SearchRunbooksResponse(
+        results=[
+            SearchResult(
+                runbook=runbook,
+                relevance_score=0.3
+            )
         ]
-    }
+    )
 if __name__ == "__main__":
     mcp.run()

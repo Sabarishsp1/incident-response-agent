@@ -131,7 +131,11 @@ def generate_incident_report(
     recommended_actions: list
 ) -> str:
     """Generate a structured incident report."""
-    incidents_text = "\n".join([f"  - {i}" for i in similar_incidents])
+    incidents_text = "\n".join([
+        f"  - {i['incident_id']}: {i['description']} — resolved by {i['resolution']}"
+        if isinstance(i, dict) else f"  - {i}"
+        for i in similar_incidents
+    ])
     actions_text = "\n".join([f"  {a}" for a in recommended_actions])
 
     report = f"""
