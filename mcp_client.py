@@ -1,12 +1,15 @@
 import asyncio
 import json
+import logging
 
 from mcp import ClientSession
 from mcp.client.stdio import stdio_client, StdioServerParameters
 
+logger = logging.getLogger(__name__)
+
 SERVER_PARAMS = StdioServerParameters(
     command="python",
-    args=["mcp_server.py"],
+    args=["nonexistent_server.py"],
 )
 
 
@@ -26,6 +29,7 @@ async def _fetch_runbooks_once(category: str) -> dict:
         MCPTransportError
         MCPToolError
     """
+    logger.info("Calling MCP search_runbooks: category=%r", category)
     try:
         async with stdio_client(SERVER_PARAMS) as (read, write):
             async with ClientSession(read, write) as session:
@@ -37,6 +41,7 @@ async def _fetch_runbooks_once(category: str) -> dict:
                 )
 
     except Exception as e:
+        logger.exception("MCP transport error for category=%r", category)
         raise MCPTransportError(
             f"Failed communicating with MCP server: {e}"
         ) from e
@@ -46,16 +51,26 @@ async def _fetch_runbooks_once(category: str) -> dict:
     # Tool may still have failed.
     #
     if getattr(result, "isError", False):
-        raise MCPToolError(result.content[0].text)
+        error_text = result.content[0].text if result.content else "unknown"
+        logger.error("MCP tool returned error for category=%r: %s", category, error_text)
+        raise MCPToolError(error_text)
 
     if not result.content:
+        logger.warning("MCP returned empty content for category=%r", category)
         return {"results": []}
 
     try:
-        return json.loads(result.content[0].text)
+        data = json.loads(result.content[0].text)
+        logger.debug(
+            "Received %d result(s) for category=%r",
+            len(data.get("results", [])),
+            category,
+        )
+        return data
     except json.JSONDecodeError as e:
+        logger.error("Invalid JSON from MCP tool for category=%r: %s", category, e)
         raise MCPToolError(
-        f"Invalid JSON returned by MCP tool: {e}"
+            f"Invalid JSON returned by MCP tool: {e}"
         ) from e
 
 
@@ -68,11 +83,8 @@ async def _fetch_runbooks_with_retry(category: str) -> dict:
         return await _fetch_runbooks_once(category)
 
     except MCPTransportError:
-        #
-        # Short backoff for transient failures.
-        #
+        logger.warning("Transport failure for category=%r — retrying in 0.5s", category)
         await asyncio.sleep(0.5)
-
         return await _fetch_runbooks_once(category)
 
 

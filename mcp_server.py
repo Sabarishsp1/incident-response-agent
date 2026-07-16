@@ -4,6 +4,18 @@ from schemas import (
     SearchResult,
     SearchRunbooksResponse,
 )
+import logging
+import sys
+from pydantic import ValidationError
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    encoding="utf-8",
+    filename="logs/mcp_server.log",   # you already have a logs/ dir
+)
+logger = logging.getLogger("incident-knowledge-base")
+
 mcp = FastMCP("incident-knowledge-base")
 
 RUNBOOKS = {
@@ -158,9 +170,19 @@ def search_runbooks(category: str) -> SearchRunbooksResponse:
     """Search the knowledge base for runbooks matching an incident category."""
 
     category = category.lower()
+    logger.info("search_runbooks called: category=%s", category)
 
     if category in RUNBOOKS:
-        runbook = Runbook(**RUNBOOKS[category])
+        try:
+            runbook = Runbook(**RUNBOOKS[category])
+        except ValidationError:
+            logger.exception("Runbook validation failed for category=%s", category)
+            raise
+
+        logger.info(
+            "Exact match: category=%s runbook_id=%s score=1.0",
+            category, runbook.runbook_id
+        )
 
         return SearchRunbooksResponse(
             results=[
@@ -170,8 +192,16 @@ def search_runbooks(category: str) -> SearchRunbooksResponse:
                 )
             ]
         )
+    logger.warning(
+        "No runbook for category=%s — returning fallback score=0.3",
+        category
+    )
 
-    runbook = Runbook(**RUNBOOKS["default"])
+    try:
+        runbook = Runbook(**RUNBOOKS["default"])
+    except ValidationError:
+        logger.exception("Runbook validation failed for default fallback")
+        raise
 
     return SearchRunbooksResponse(
         results=[

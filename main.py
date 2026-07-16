@@ -9,6 +9,13 @@ from agents import (
     run_escalation,
 )
 from dotenv import load_dotenv
+import logging
+
+logging.basicConfig(
+    level=logging.WARNING,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logging.getLogger("mcp_client").setLevel(logging.INFO)
 
 load_dotenv()
 
