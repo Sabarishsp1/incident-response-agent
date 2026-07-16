@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 SERVER_PARAMS = StdioServerParameters(
     command="python",
-    args=["nonexistent_server.py"],
+    args=["mcp_server.py"],
 )
 
 
